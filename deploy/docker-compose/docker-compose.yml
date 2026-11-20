@@ -1,0 +1,37 @@
+# gitlab-custom-login-page in front of a GitLab container ("front mode").
+# The skin listens on :8080 and passes everything except the sign-in page straight to GitLab.
+# Put it behind whatever terminates TLS for you today (Traefik, Caddy, nginx, a cloud LB),
+# or use the omnibus snippet in ../omnibus if the bundled nginx of GitLab terminates TLS itself.
+services:
+  login-skin:
+    image: ghcr.io/ar4ikov/gitlab-custom-login-page:latest
+    restart: unless-stopped
+    ports: ["8080:8080"]
+    environment:
+      # where GitLab answers plain HTTP from inside the compose network
+      GITLAB_UPSTREAM: http://gitlab:80
+      # LOGO_API_HOST: gitlab.example.com     # set when GitLab redirects internal http calls to https
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}         # read_api scope; empty = only public projects
+      LOGO_VISIBILITY: public                 # public | internal | all | none
+      SKIN_CONCEPT: random                    # or nebula, aurora, glass, orb, ink, voxels, topo, prism
+    volumes:
+      - logos:/var/lib/login-skin/logos
+      # - ./my-logos:/logos-custom:ro         # your own images; pinned.png is shown on every load
+    depends_on: [gitlab]
+
+  # your existing GitLab service goes here - shown only so the example is complete
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    restart: unless-stopped
+    hostname: gitlab.example.com
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://gitlab.example.com'
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+
+volumes: { logos: {}, gitlab-config: {}, gitlab-logs: {}, gitlab-data: {} }

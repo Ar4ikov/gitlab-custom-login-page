@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login skin demo</title>
+<style>
+  html,body{height:100%;margin:0}
+  body{font:14px/1.4 system-ui,sans-serif;color:#eee;display:flex;flex-direction:column;align-items:center}
+  main.content{width:min(92vw,420px);margin-top:12vh;display:grid;gap:12px}
+  h1{font-size:18px;text-align:center;margin:0 0 6px}
+  label{font-weight:600;display:grid;gap:6px}
+  input{font:inherit;color:inherit;background:rgba(30,28,40,.72);border:1px solid #6b6878;border-radius:6px;padding:8px 10px}
+  button.go{font:inherit;border:0;border-radius:6px;padding:9px;background:#ececef;color:#222;cursor:pointer}
+  .hint{opacity:.6;text-align:center;font-size:12px}
+</style></head>
+<body class="login-page">
+<main class="content">
+  <h1>Your GitLab</h1>
+  <label>Username or primary email<input autocomplete="off"></label>
+  <label>Password<input type="password" autocomplete="off"></label>
+  <button class="go" type="button">Sign in</button>
+  <div class="hint">Demo page - not a real form. Move the mouse over the logos.</div>
+</main>
+<script>window.LOGIN_SKIN = { manual: true };</script>
+<script src="login-skin.js" data-base="./"></script>
+<script>
+/* preview switcher: concept / layout / reshuffle. Uses the built-in demo logos. */
+(function () {
+  var demo = { logos: ['ring.svg','bars.svg','cube.svg','spark.svg','sun.svg','pill.svg','grid.svg','wave.svg'], pinned: 'pinned.svg' };
+  var q = new URLSearchParams(location.search), cfg = { concept: q.get('c') || 'random', layout: q.get('l') || undefined };
+  var p = document.createElement('div');
+  p.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:9;font-size:12px;background:rgba(20,18,28,.82);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:10px;display:grid;gap:6px;max-width:min(92vw,560px)';
+  function row(label, items, cur, on) {
+    var r = document.createElement('div'); r.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;align-items:center';
+    var l = document.createElement('span'); l.textContent = label; l.style.cssText = 'opacity:.6;width:52px'; r.appendChild(l);
+    items.forEach(function (it) {
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = it[1];
+      b.style.cssText = 'font:inherit;color:inherit;cursor:pointer;border-radius:6px;padding:4px 8px;border:1px solid rgba(255,255,255,.18);background:' + (it[0] === cur ? 'rgba(255,140,60,.35)' : 'transparent');
+      b.onclick = function () { on(it[0]); }; r.appendChild(b);
+    }); p.appendChild(r);
+  }
+  function go() {
+    var s = LoginSkin.render(cfg); p.innerHTML = '';
+    row('Concept', Object.keys(LoginSkin.concepts).map(function (k) { return [k, LoginSkin.concepts[k].title]; }), s.concept, function (k) { cfg = { concept: k }; go(); });
+    row('Layout', LoginSkin.layouts.map(function (k) { return [k, k]; }), s.layout, function (k) { cfg.layout = k; cfg.concept = s.concept; go(); });
+    row('', [['x', '↻ reshuffle']], null, function () { go(); });
+  }
+  document.body.appendChild(p);
+  // the demo always uses the bundled sample logos (served from demo-logos/)
+  LoginSkin.setLogos(demo, 'demo-logos/'); go();
+})();
+</script>
+</body></html>

@@ -1,0 +1,25 @@
+# Omnibus / Linux package: the bundled nginx of GitLab keeps terminating TLS and only forwards
+# three paths to the skin container running next to it:
+#
+#   docker run -d --name login-skin --restart unless-stopped -p 127.0.0.1:8080:8080 \
+#     --add-host host.docker.internal:host-gateway \
+#     -e GITLAB_UPSTREAM=http://host.docker.internal:8181 \
+#     -e LOGO_API_HOST=gitlab.example.com -e GITLAB_TOKEN=... \
+#     ghcr.io/ar4ikov/gitlab-custom-login-page
+#
+# The skin has to reach Workhorse over TCP (by default it listens on a unix socket):
+gitlab_workhorse['listen_network'] = "tcp"
+gitlab_workhorse['listen_addr']    = "0.0.0.0:8181"   # firewall this port from the outside
+
+nginx['custom_gitlab_server_config'] = <<-NGINX
+  location = /users/sign_in  { proxy_pass http://127.0.0.1:8080; include /var/opt/gitlab/nginx/conf/login-skin-proxy.inc; }
+  location /-/login-skin/    { proxy_pass http://127.0.0.1:8080; include /var/opt/gitlab/nginx/conf/login-skin-proxy.inc; }
+  location /assets/blooms/   { proxy_pass http://127.0.0.1:8080; include /var/opt/gitlab/nginx/conf/login-skin-proxy.inc; }
+NGINX
+
+# Create /var/opt/gitlab/nginx/conf/login-skin-proxy.inc with the lines below, then run: gitlab-ctl reconfigure
+#   proxy_set_header Host              $http_host;
+#   proxy_set_header X-Real-IP         $remote_addr;
+#   proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+#   proxy_set_header X-Forwarded-Proto $scheme;
+#   proxy_set_header X-Forwarded-Port  $server_port;
