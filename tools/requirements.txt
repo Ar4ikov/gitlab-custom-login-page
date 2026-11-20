@@ -1,0 +1,9 @@
+# for tools/generate_backgrounds.py (needs CUDA) and tools/make_blooms.py
+torch
+diffusers>=0.36
+transformers
+accelerate
+bitsandbytes
+gguf
+numpy
+pillow

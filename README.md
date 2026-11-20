@@ -131,10 +131,18 @@ picture. Older GitLab versions don't have this asset, the route is then simply u
 ## Make your own backgrounds
 
 The backgrounds were generated with Z-Image-Turbo on black and converted to transparency. The
-scripts in [`tools/`](tools) reproduce them (a GGUF Q4 quant split across two GPUs, about 3 GB
-of VRAM each): edit `tools/prompts.json`, run `generate_backgrounds.py`, then `make_blooms.py`.
-To add a concept, drop a `.webp` into `skin/bg/` and add an entry to `CONCEPTS` in
-[`skin/login-skin.js`](skin/login-skin.js).
+scripts in [`tools/`](tools) reproduce them on two small GPUs (a GGUF Q4 quant split block-wise,
+about 3 GB of VRAM on each):
+
+```bash
+pip install -r tools/requirements.txt
+python tools/generate_backgrounds.py tools/prompts.json --out out     --base models/base --gguf models/z-image-turbo-Q4_K_M.gguf
+# six frames of your choice -> skin/bloom/side-1.webp ... side-6.webp
+python tools/make_blooms.py out/nebula-s11.raw.jpg out/aurora-s22.raw.jpg ... --out skin/bloom --sheet sheet.jpg
+```
+
+Both scripts have `--help`. To add a concept, drop a `.webp` into `skin/bg/` and add an entry to
+`CONCEPTS` in [`skin/login-skin.js`](skin/login-skin.js).
 
 ## License
 

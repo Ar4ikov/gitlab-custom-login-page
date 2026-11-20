@@ -1,38 +1,147 @@
-"""Turn the generated backgrounds (*.raw.jpg) into blurred, grainy corner "blooms" (350x600 webp)."""
-import glob, os, numpy as np
+#!/usr/bin/env python3
+"""Turn generated backgrounds into blurred, grainy corner "blooms".
+
+GitLab draws a 350x600 picture in the top-right corner of the signed-in UI.
+This script builds replacements for it: each source frame (a ``*.raw.jpg``
+written by ``generate_backgrounds.py``) is cropped to its colourful part,
+blurred heavily, faded out towards the left and the bottom edges and dusted
+with film grain. The results are written as ``side-1.webp``, ``side-2.webp``,
+... in the order the sources are given.
+
+The nginx config picks one of six files at random, so pass six sources (or
+adjust the ``map`` block in ``docker/default.conf.template``).
+
+Example::
+
+    python make_blooms.py out/a-peach-nebula-s11.raw.jpg out/b-aurora-ribbons-s22.raw.jpg \\
+        --out ../skin/bloom --sheet sheet.jpg
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+from collections.abc import Sequence
+from pathlib import Path
+
+import numpy as np
 from PIL import Image, ImageFilter
-SRC = {1: 'a-peach-nebula-s11', 2: 'b-aurora-ribbons-s22', 3: 'c-liquid-glass-s31', 4: 'd-grain-orb-s41',
-       5: 'e-ink-smoke-s52', 6: 'f-voxel-drift-s61', 7: 'g-topo-lines-s71', 8: 'h-prism-shards-s81'}
-W, H = 350, 600            # 2x of GitLab's 350x600 bloom-side slot (anchored top right)
-out = os.environ.get('OUT', 'bloom'); os.makedirs(out, exist_ok=True)
-rng = np.random.default_rng(7)
-yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
-dx, dy = (W - xx) / W, yy / H                      # distance from the top-right corner, 0..1
-r = np.clip(1 - np.sqrt(dx ** 2 + dy ** 2) / 0.94, 0, 1)
-mask = r * r * (3 - 2 * r)                         # smoothstep: exactly 0 before the left / bottom edges
-SRC = {k: v for k, v in SRC.items() if k not in (3, 8)}   # glass and prism blur into grey mush
-sheet = Image.new('RGB', (W * 6, H), (14, 13, 18))
-for n, name in SRC.items():
-    im = Image.open(os.path.join(os.environ.get('SRC', 'out'), f'{name}.raw.jpg')).convert('RGB')
-    a = np.asarray(im).astype(np.float32)
-    ys, xs = np.where(a.max(axis=2) > 60)          # crop to the colourful part
-    im = im.crop((xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
-    s = max(W / im.width, H / im.height)
-    im = im.resize((int(im.width * s) + 1, int(im.height * s) + 1), Image.LANCZOS)
-    l, t = (im.width - W) // 2, (im.height - H) // 2
-    im = im.crop((l, t, l + W, t + H)).filter(ImageFilter.GaussianBlur(36))
-    a = np.asarray(im).astype(np.float32) / 255
-    a = a / max(a.max(), 1e-3)                     # normalise brightness after the heavy blur
-    flips = [a, a[:, ::-1], a[::-1], a[::-1, ::-1]] # put the brightest part under the top-right corner
-    a = max(flips, key=lambda f: float((f.max(axis=2) * mask).sum()))
-    lum = a.max(axis=2)
-    alpha = mask * np.clip(0.3 + lum * 1.0, 0, 1) * 0.92
-    rgb = np.clip(a + rng.normal(0, 0.05, (H, W, 1)).astype(np.float32), 0, 1)
-    alpha = alpha * (1 + rng.normal(0, 0.10, (H, W)).astype(np.float32)) + (mask > 0) * rng.uniform(-0.5, 0.5, (H, W)).astype(np.float32) / 255
-    alpha = np.clip(alpha, 0, 1)
-    res = Image.fromarray((np.dstack([rgb, alpha]) * 255).astype(np.uint8), 'RGBA')
-    res.save(f'{out}/side-{n}.webp', quality=70, alpha_quality=100, method=6)
-    prev = Image.new('RGBA', (W, H), (14, 13, 18, 255)); prev.alpha_composite(res)
-    sheet.paste(prev.convert('RGB'), (list(SRC).index(n) * W, 0))
-sheet.save(os.path.join(out, 'sheet.jpg'), quality=85)   # contact sheet for a quick look
-print({f: os.path.getsize(f) for f in sorted(glob.glob(out + '/*.webp'))})
+
+log = logging.getLogger("make_blooms")
+
+SIZE = (350, 600)  # width, height of GitLab's bloom-side slot
+CONTENT_THRESHOLD = 60  # 0-255: pixels brighter than this count as "content"
+PAGE_COLOUR = (14, 13, 18)  # dark UI colour used for the contact sheet
+
+
+def corner_mask(width: int, height: int, reach: float = 0.94) -> np.ndarray:
+    """Opacity mask anchored in the top-right corner.
+
+    A smoothstep falloff that reaches exactly zero before the left and the
+    bottom edges, so the picture never ends with a visible border.
+    """
+    rows, cols = np.mgrid[0:height, 0:width].astype(np.float32)
+    from_right = (width - cols) / width
+    from_top = rows / height
+    falloff = np.clip(1.0 - np.hypot(from_right, from_top) / reach, 0.0, 1.0)
+    return falloff * falloff * (3.0 - 2.0 * falloff)
+
+
+def crop_to_content(image: Image.Image, threshold: int = CONTENT_THRESHOLD) -> Image.Image:
+    """Cut away the black margins around the bright part of the frame."""
+    brightness = np.asarray(image.convert("RGB")).max(axis=2)
+    rows, cols = np.where(brightness > threshold)
+    if rows.size == 0:
+        return image
+    return image.crop((cols.min(), rows.min(), cols.max() + 1, rows.max() + 1))
+
+
+def cover(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """Scale and centre-crop the image so it fills ``size`` completely."""
+    width, height = size
+    scale = max(width / image.width, height / image.height)
+    resized = image.resize((round(image.width * scale) + 1, round(image.height * scale) + 1), Image.LANCZOS)
+    left = (resized.width - width) // 2
+    top = (resized.height - height) // 2
+    return resized.crop((left, top, left + width, top + height))
+
+
+def brightest_under(colour: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Flip the picture so that its brightest area sits where the mask is strongest."""
+    flips = (colour, colour[:, ::-1], colour[::-1], colour[::-1, ::-1])
+    return max(flips, key=lambda candidate: float((candidate.max(axis=2) * mask).sum()))
+
+
+def make_bloom(
+    source: Image.Image,
+    mask: np.ndarray,
+    rng: np.random.Generator,
+    blur: float = 36.0,
+    grain: float = 0.05,
+    opacity: float = 0.92,
+) -> Image.Image:
+    """Build one RGBA bloom of the same size as ``mask``."""
+    height, width = mask.shape
+    blurred = cover(crop_to_content(source), (width, height)).filter(ImageFilter.GaussianBlur(blur))
+
+    colour = np.asarray(blurred.convert("RGB"), dtype=np.float32) / 255.0
+    colour /= max(float(colour.max()), 1e-3)  # the heavy blur dims everything: stretch it back
+    colour = brightest_under(colour, mask)
+
+    alpha = mask * np.clip(0.3 + colour.max(axis=2), 0.0, 1.0) * opacity
+    alpha *= 1.0 + rng.normal(0.0, 0.10, alpha.shape).astype(np.float32)
+    # half a level of dither hides banding in the long transparent gradient
+    alpha += (mask > 0) * rng.uniform(-0.5, 0.5, alpha.shape).astype(np.float32) / 255.0
+
+    colour = colour + rng.normal(0.0, grain, (height, width, 1)).astype(np.float32)
+    rgba = np.dstack([np.clip(colour, 0.0, 1.0), np.clip(alpha, 0.0, 1.0)])
+    return Image.fromarray((rgba * 255).astype(np.uint8), "RGBA")
+
+
+def contact_sheet(blooms: Sequence[Image.Image], background: tuple[int, int, int] = PAGE_COLOUR) -> Image.Image:
+    """Lay the blooms side by side on the UI colour for a quick visual check."""
+    width, height = blooms[0].size
+    sheet = Image.new("RGB", (width * len(blooms), height), background)
+    for index, bloom in enumerate(blooms):
+        tile = Image.new("RGBA", bloom.size, (*background, 255))
+        tile.alpha_composite(bloom)
+        sheet.paste(tile.convert("RGB"), (index * width, 0))
+    return sheet
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("sources", type=Path, nargs="+", help="frames rendered on black (*.raw.jpg)")
+    parser.add_argument("--out", type=Path, default=Path("bloom"), help="output directory (default: bloom)")
+    parser.add_argument("--sheet", type=Path, help="also save a contact sheet to this file")
+    parser.add_argument("--blur", type=float, default=36.0, help="Gaussian blur radius in pixels (default: 36)")
+    parser.add_argument("--grain", type=float, default=0.05, help="film grain strength, 0..1 (default: 0.05)")
+    parser.add_argument("--quality", type=int, default=70, help="WebP quality (default: 70)")
+    parser.add_argument("--seed", type=int, default=7, help="seed of the grain, for reproducible files")
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    rng = np.random.default_rng(args.seed)
+    mask = corner_mask(*SIZE)
+    args.out.mkdir(parents=True, exist_ok=True)
+
+    blooms = []
+    for index, source in enumerate(args.sources, start=1):
+        with Image.open(source) as image:
+            bloom = make_bloom(image.convert("RGB"), mask, rng, blur=args.blur, grain=args.grain)
+        target = args.out / f"side-{index}.webp"
+        bloom.save(target, quality=args.quality, alpha_quality=100, method=6)
+        blooms.append(bloom)
+        log.info("%s -> %s (%d kB)", source.name, target, target.stat().st_size // 1024)
+
+    if args.sheet:
+        contact_sheet(blooms).save(args.sheet, quality=85)
+        log.info("contact sheet: %s", args.sheet)
+
+
+if __name__ == "__main__":
+    main()
