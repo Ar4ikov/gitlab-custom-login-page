@@ -17,15 +17,16 @@
   <label>Username or primary email<input autocomplete="off"></label>
   <label>Password<input type="password" autocomplete="off"></label>
   <button class="go" type="button">Sign in</button>
-  <div class="hint">Demo page - not a real form. Move the mouse over the logos.</div>
+  <div class="hint" id="hint">Demo page - not a real form. Move the mouse over the logos.</div>
 </main>
 <script>window.LOGIN_SKIN = { manual: true };</script>
 <script src="login-skin.js" data-base="./"></script>
 <script>
 /* preview switcher: concept / layout / reshuffle. Uses the built-in demo logos. */
 (function () {
-  var demo = { logos: ['ring.svg','bars.svg','cube.svg','spark.svg','sun.svg','pill.svg','grid.svg','wave.svg'], pinned: 'pinned.svg' };
+  var demo = { logos: ['ring.svg','bars.svg','cube.svg','spark.svg','sun.svg','pill.svg','grid.svg','wave.svg','flame.svg','letter.svg','hex.svg','doc.svg','bolt.svg','orbit.svg','leaf.svg','dots.svg'], pinned: 'pinned.svg' };
   var q = new URLSearchParams(location.search), cfg = { concept: q.get('c') || 'random', layout: q.get('l') || undefined };
+  if (q.has('clean')) document.getElementById('hint').remove();
   var p = document.createElement('div');
   p.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:9;font-size:12px;background:rgba(20,18,28,.82);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:10px;display:grid;gap:6px;max-width:min(92vw,560px)';
   function row(label, items, cur, on) {
@@ -43,7 +44,7 @@
     row('Layout', LoginSkin.layouts.map(function (k) { return [k, k]; }), s.layout, function (k) { cfg.layout = k; cfg.concept = s.concept; go(); });
     row('', [['x', '↻ reshuffle']], null, function () { go(); });
   }
-  document.body.appendChild(p);
+  if (!q.has('clean')) document.body.appendChild(p);      // ?clean hides the switcher (used for screenshots)
   // the demo always uses the bundled sample logos (served from demo-logos/)
   LoginSkin.setLogos(demo, 'demo-logos/'); go();
 })();

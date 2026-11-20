@@ -4,6 +4,8 @@ An animated sign-in page for self-managed GitLab: an abstract background, your p
 floating around the form with depth-of-field blur and film grain, and a focus pull that follows
 the cursor. No fork, no patched assets, no GitLab rebuild.
 
+![Sign-in page with the ink background and logos in the corners](docs/ink-corners.jpg)
+
 GitLab lets you change the logo and the text of the sign-in page, but not its background and not
 anything dynamic. This project adds that with a tiny nginx container that injects **one
 `<script>` tag** into `/users/sign_in` (`sub_filter`) and serves the assets.
@@ -17,6 +19,13 @@ anything dynamic. This project adds that with a tiny nginx container that inject
   the signed-in UI with a blurred, grainy variant of the same backgrounds.
 - **Small blast radius** – only the sign-in page is rewritten. Remove one route and GitLab is stock again.
 - Respects `prefers-reduced-motion`, works on phones, no dependencies, no external requests.
+
+| | |
+|---|---|
+| ![Peach nebula, scatter layout](docs/nebula-scatter.jpg) | ![Aurora, orbit layout](docs/aurora-orbit.jpg) |
+| ![Contour lines, scatter layout](docs/topo-scatter.jpg) | ![Ink, corners layout](docs/ink-corners.jpg) |
+
+<sub>Screenshots of the bundled demo page with sample logos. On a real instance the logos are yours.</sub>
 
 Try it without GitLab:
 
